@@ -3,3 +3,113 @@ title: "kody_lic"
 format: html
 ---
 
+```{r}
+# Pakiety
+library(dplyr)
+library(readxl)
+library(writexl)
+library(topsis)
+library(sf)
+library(gdm)
+library(clusterSim)
+library(cluster)
+# Wczytywanie danych
+dane <- read_xlsx('df.xlsx', sheet=1)
+#############################################################
+# RANKING TOPSIS
+# Krok 1. Tworzenie macierzy x_ij, i=1,...66; j=1,...,20
+# wartość j-tej cechy w i-tym mieście
+xij <- as.matrix(dane %>% select(3:21))
+n <- nrow(xij)
+k <- ncol(xij)
+
+# Krok 2. Tworzenie macierzy z_ij
+zij <- matrix(,nrow = n, ncol = k)
+for (j in 1:k) {
+  zij[,j] <- xij[,j] / sqrt(sum(xij[,j]^2))
+}
+zij
+
+# Krok 3. Nadanie wag
+wj <- rep (1, 19)
+
+# Krok 4. Tworzymy macierz vij, czyli zmienne z_ij z nadanymi wagami
+vij <- wj * zij 
+
+# Krok 5. Wektor idealny(apl) i antyidealny(ami)
+apl <- c(max(vij[,1]),max(vij[,2]),max(vij[,3]),max(vij[,4]),
+    max(vij[,5]),max(vij[,6]),max(vij[,7]),max(vij[,8]),
+    max(vij[,9]),max(vij[,10]),max(vij[,11]),max(vij[,12]),
+    max(vij[,13]),max(vij[,14]),max(vij[,15]),max(vij[,16]),
+    max(vij[,17]),min(vij[,18]),min(vij[,19]))
+
+ami <-c(min(vij[,1]),min(vij[,2]),min(vij[,3]),min(vij[,4]),
+    min(vij[,5]),min(vij[,6]),min(vij[,7]),min(vij[,8]),
+    min(vij[,9]),min(vij[,10]),min(vij[,11]),min(vij[,12]),
+    min(vij[,13]),min(vij[,14]),min(vij[,15]),min(vij[,16]),
+    min(vij[,17]),max(vij[,18]),max(vij[,19]))
+
+# Krok 6. Odleglość każdego miasta od ideału i antyideału
+dpl <-  matrix(,nrow = n, ncol = 1)
+dmi <-  matrix(,nrow = n, ncol = 1)
+for(i in 1:n){
+  dpl[i,1] <- sqrt(sum((vij[i,]-apl)^2))
+  dmi[i,1] <- sqrt(sum((vij[i,]-ami)^2))
+}
+
+# Krok 7. Miernik R zawsze w przedziale (0,1)
+R = dmi / (dpl + dmi)
+dane$R_topsis <- round(R,3)
+
+# Krok 8. Ustalenie rankingu TOPSIS 
+ranking_topsis <- dane[c("Kod", "Nazwa", "R_topsis")] 
+ranking_topsis <- arrange(ranking_topsis, desc(R_topsis))
+#############################################################
+# RANKING GDM
+ranking <- pattern.GDM1( dane [ ,3:21], 
+          performanceVariable=c("s","s","s","s","s","s",
+                                "s","s","s","s","s","s",
+                                "s","s","s","s","s","d","d"),
+scaleType ="r", 
+nomOptValues = NULL,
+normalization ='n4', 
+weightsType ="equal",
+patternType = "upper")
+
+wynik <- round(ranking$distances, 3)
+dane$wynik <- wynik
+wynik <- dane[, c(1, 2, 22)]
+wynik <- arrange(wynik, wynik)
+write_xlsx(wynik, path = "GDM_ranking.xlsx")
+#############################################################
+# METODA WARDA
+# Krok 1. Normalizacja danych metodą unitaryzacji zerowanej
+zmienne_stymulanty <- paste0("x", 1:17)
+zmienne_destymulanty <- paste0("x", 18:19)
+zmienne_wszystkie <- c(zmienne_stymulanty, 
+                        zmienne_destymulanty)  
+dane_normalized <- dane %>%
+  mutate(across(all_of(zmienne_stymulanty), 
+            ~ (. - min(., na.rm = TRUE)) / 
+        (max(., na.rm = TRUE) - min(., na.rm = TRUE)))) %>%
+  mutate(across(all_of(zmienne_destymulanty), 
+            ~ (max(., na.rm = TRUE) - .) / 
+            (max(., na.rm = TRUE) - min(., na.rm = TRUE))))
+
+# Krok 2. Wybór tylko zmiennych numerycznych do klasteryzacji 
+dane_do_klasteryzacji <- dane_normalized[, zmienne_wszystkie]
+
+# Krok 3. Tworzenie macierzy odleglosci i procedura Warda
+dist_matrix <- dist(dane_do_klasteryzacji, method = "euclidean")
+
+model_cluster <- hclust(dist_matrix, method = "ward.D2")
+
+# Krok 4. Przypisanie skupień
+k <- 5
+dane$cluster <- cutree(model_cluster, k = k)
+
+wynik <- dane %>%
+  dplyr::select(1, 2, cluster) %>%
+  dplyr::arrange(cluster)
+```
+
